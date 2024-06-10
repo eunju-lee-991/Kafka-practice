@@ -12,6 +12,8 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.opensearch.action.bulk.BulkRequest;
+import org.opensearch.action.bulk.BulkResponse;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.index.IndexResponse;
 import org.opensearch.client.RequestOptions;
@@ -29,9 +31,9 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.Properties;
 
-public class OpenSearchConsumer {
+public class OpenSearchConsumerWithBulkRequest {
     public static void main(String[] args) throws IOException {
-        Logger logger = LoggerFactory.getLogger(OpenSearchConsumer.class.getSimpleName());
+        Logger logger = LoggerFactory.getLogger(OpenSearchConsumerWithBulkRequest.class.getSimpleName());
 
         // create an OpenSearch Client
         RestHighLevelClient openSearchClient = createOpenSearchClient();
@@ -40,12 +42,12 @@ public class OpenSearchConsumer {
         KafkaConsumer<String, String> consumer = createKafkaConsumer();
 
         // create the index on OpenSearch if it does not exist
-        try(openSearchClient; consumer){ // 에러 발생하거나 로직 끝나면 openSearchClient 닫음
+        try (openSearchClient; consumer) { // 에러 발생하거나 로직 끝나면 openSearchClient 닫음
             if (!openSearchClient.indices().exists(new GetIndexRequest("wikimedia"), RequestOptions.DEFAULT)) {
                 logger.info("create index");
                 CreateIndexRequest createIndexRequest = new CreateIndexRequest("wikimedia");
                 openSearchClient.indices().create(createIndexRequest, RequestOptions.DEFAULT);
-            }else {
+            } else {
                 logger.info("index exists");
             }
 
@@ -56,6 +58,8 @@ public class OpenSearchConsumer {
                 int count = records.count();
                 logger.info("Received {} records", count);
 
+                BulkRequest bulkRequest = new BulkRequest();
+
                 for (ConsumerRecord<String, String> record : records) {
                     try {
                         // make sure consumer is idempotent
@@ -63,21 +67,26 @@ public class OpenSearchConsumer {
                         String id = extractId(record.value());
 
                         IndexRequest indexRequest = new IndexRequest("wikimedia").source(record.value(), XContentType.JSON).id(id);
-                        IndexResponse indexResponse = openSearchClient.index(indexRequest, RequestOptions.DEFAULT);
-
-//                        logger.info("Inserted 1 document into OpenSearch: {}", indexResponse.getId());
+//                        IndexResponse indexResponse = openSearchClient.index(indexRequest, RequestOptions.DEFAULT);
+                        bulkRequest.add(indexRequest);
                     } catch (Exception e) {
 
                     }
                 }
 
-                /**
-                 *
-                 properties.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false"); 적용한 후의 코드
-                 */
-                // commit offsets after the batch is consumed -> at least once 구현 완성!
-                consumer.commitSync();
-                logger.info("Offsets have been committed");
+                if (bulkRequest.numberOfActions() > 0) {
+                    BulkResponse bulkResponse = openSearchClient.bulk(bulkRequest, RequestOptions.DEFAULT);
+                    logger.info("Inserted {} records", bulkResponse.getItems().length);
+
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+
+                    consumer.commitSync();
+                    logger.info("Offsets have been committed");
+                }
             }
         }
 
