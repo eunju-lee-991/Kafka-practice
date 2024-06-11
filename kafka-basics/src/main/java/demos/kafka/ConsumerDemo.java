@@ -17,7 +17,7 @@ public class ConsumerDemo {
     public static void main(String[] args) {
         log.info("I am a kafka Consumer!");
         String groupId = "my-java-application";
-        String topic = "demo_java";
+        String topic = "wikimedia.recentchange.connect";
         // create Consumer Properties
         Properties properties = new Properties();
         properties.setProperty("bootstrap.servers", "127.0.0.1:9092");
